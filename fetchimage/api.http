@@ -1,0 +1,4 @@
+
+GET http://127.0.0.1:8080/api/users/login-user
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzM3Mzk0MDIwLCJpYXQiOjE3MzczOTA0MjAsImp0aSI6IjdkNWI1ZjFhNmU2MjRlODA4ZmY4ZTI3ZGJlN2E0MWJlIiwidXNlcl9pZCI6Mn0.zVnaQCZrfv9sw-D5c5J7baENe5xhwVo3yugAipfjtGs
