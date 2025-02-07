@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'fetchimage',
     'rest_framework',
     'corsheaders',
-    'rest_framework.authtoken'
+    'rest_framework.authtoken',
+    'channels'
 ]
 
 MIDDLEWARE = [
@@ -174,3 +175,11 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+ASGI_APPLICATION = 'radiplybackend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',  # Use Redis in production
+    },
+}

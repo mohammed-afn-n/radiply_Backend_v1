@@ -18,7 +18,8 @@ class Worklist(models.Model):
     status = models.CharField(max_length=50)
     priority = models.CharField(max_length=50)
     imgpath = models.CharField(max_length=255, verbose_name="Image Path")
-    img_name = models.CharField(max_length=255, verbose_name="Image Name")  # New field for image name
+    img_name = models.CharField(max_length=255, verbose_name="Image Name")
+    data_set_name = models.CharField(max_length=255, verbose_name="Data Set Name")  
 
     class Meta:
         verbose_name = "Worklist"
