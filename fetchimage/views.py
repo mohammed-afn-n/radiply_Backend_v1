@@ -450,7 +450,7 @@ def generate_heatmap_view(request):
             print(f'imgpath : {imgpath}   :  label :{label}')
 
             # Assuming 'generate_heatmap' returns a heatmap image and the original image
-            heatmap_img, original_img =radiply.utils.generate_heatmapDens(imgpath, label)
+            heatmap_img, original_img =radiply.utils.generate_heatmap(imgpath, label)
             print(f'heatmap_img : {heatmap_img}   :  original_img :{original_img}')
             # Convert images to base64-encoded strings
             heatmap_img_base64 = image_to_base64(heatmap_img)
@@ -466,13 +466,18 @@ def generate_heatmap_view(request):
             print(f"Error: {e}")
             return JsonResponse({'success': False, 'message': str(e)})
 
-def image_to_base64(image_array): 
+def image_to_base64(image):
+    # If the image is a PIL Image, convert it to a NumPy array
+    if isinstance(image, Image.Image):
+        image = np.array(image)
+    
     # Convert the image to a PIL image, then to base64
-    image = Image.fromarray(image_array.astype(np.uint8))
+    image = Image.fromarray(image.astype(np.uint8))
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode('latin1')
     return img_str
+
 
 
 
