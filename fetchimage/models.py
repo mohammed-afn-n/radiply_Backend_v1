@@ -57,3 +57,37 @@ class Pathologies(models.Model):
 
     def __str__(self):
         return f"Pathology for {self.worklist.study_name if self.worklist else 'Unknown Study'}"
+
+
+
+
+from django.utils import timezone
+class Heatmap(models.Model):
+    worklist = models.ForeignKey(Worklist, on_delete=models.CASCADE, related_name='heatmaps')
+    generated_at = models.DateTimeField(default=timezone.now)
+
+    # Column for the original image
+    original_img = models.BinaryField(null=True, blank=True)
+
+    # Columns for each pathology
+    pneumothorax = models.BinaryField(null=True, blank=True)
+    consolidation = models.BinaryField(null=True, blank=True)
+    enlarged_cardiomediastinum = models.BinaryField(null=True, blank=True)
+    lung_lesion = models.BinaryField(null=True, blank=True)
+    pneumonia = models.BinaryField(null=True, blank=True)
+    infiltration = models.BinaryField(null=True, blank=True)
+    effusion = models.BinaryField(null=True, blank=True)
+    atelectasis = models.BinaryField(null=True, blank=True)
+    cardiomegaly = models.BinaryField(null=True, blank=True)
+    edema = models.BinaryField(null=True, blank=True)
+    lung_opacity = models.BinaryField(null=True, blank=True)
+    fracture = models.BinaryField(null=True, blank=True)
+    mass = models.BinaryField(null=True, blank=True)
+    nodule = models.BinaryField(null=True, blank=True)
+    emphysema = models.BinaryField(null=True, blank=True)
+    fibrosis = models.BinaryField(null=True, blank=True)
+    pleural_thickening = models.BinaryField(null=True, blank=True)
+    hernia = models.BinaryField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.worklist.id} - {self.generated_at}"

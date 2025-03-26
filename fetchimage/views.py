@@ -19,7 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 import json
 import torch
 import numpy as np
-from fetchimage.models import Worklist, Pathologies
+from fetchimage.models import Worklist, Pathologies,Heatmap
 from .serializers import WorklistSerializer
 import torchvision
 from PIL import Image
@@ -29,6 +29,7 @@ import io
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import base64
+from django.utils import timezone
 d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
 def get_csv_data(request):
     file_path = "/mnt/efs/common/radiply/combined_test_dataset_details.csv"
@@ -69,8 +70,7 @@ IMAGE_DIR = r"C:/Users/moham/Downloads"
 transforms = torchvision.transforms.Compose([radiply.datasets.XRayCenterCrop(), radiply.datasets.XRayResizer(224)])
 def get_image(request, image_name):
     data_set_name = request.GET.get("dataSetName", None)
-    print(f"Dataset Name: {data_set_name}")
-    print(f"My Image: {image_name}")
+ 
 
     if not data_set_name:
         return JsonResponse({"error": "dataSetName parameter is required"}, status=400)
@@ -83,13 +83,13 @@ def get_image(request, image_name):
     elif data_set_name == "CHEX":
         d = radiply.datasets.CheX_Dataset(transform=transforms, data_aug=True, unique_patients=False, views=["PA", "AP", "L"])
         sanitized_image_name = image_name.replace("!", "/")
-        print(f'sanitized_image_name {sanitized_image_name}')
+       
         image_index = d.csv[d.csv["Path"] == sanitized_image_name].index[0]
-        print(f'image_index {image_index}')
+        
         imgid = d.csv["Path"].iloc[image_index]
         imgid = imgid.replace("CheXpert-v1.0-small/", "").replace("CheXpert-v1.0/", "")
         image_path = d.imgpath / imgid
-        print(f'image_path : {image_path}')
+       
         
     elif data_set_name == "SIIM":
         d = radiply.datasets.SIIM_Pneumothorax_Dataset(transform=transforms, data_aug=True, unique_patients=False)
@@ -129,15 +129,15 @@ def get_image(request, image_name):
         raise Http404("Image not found")
 
 
-class DataSetPagination(PageNumberPagination):
-    page_size = 10  # Set the default page size
-    page_size_query_param = 'page_size'  # Allow the client to define page size (optional)
-    max_page_size = 100  # Set a maximum page size for security reasons
+# class DataSetPagination(PageNumberPagination):
+#     page_size = 10  # Set the default page size
+#     page_size_query_param = 'page_size'  # Allow the client to define page size (optional)
+#     max_page_size = 100  # Set a maximum page size for security reasons
 
 class DataSetViewSet(viewsets.ModelViewSet):
     queryset = DataSet.objects.all()
     serializer_class = DataSetSerializer
-    pagination_class = DataSetPagination  # Add the pagination class
+    # pagination_class = DataSetPagination  # Add the pagination class
 
 class PathologiesViewSet(viewsets.ModelViewSet):
     queryset = Pathologies.objects.all()
@@ -171,13 +171,15 @@ class UserViewSet(viewsets.ModelViewSet):
         url_path='login-user'
     )
     def get_user(self, request, *args, **kwargs):
-        print("===============================")
+        
         try:
             user = self.get_queryset().get(id=request.user.id)
             serializer = self.get_serializer(user)
             return Response(serializer.data)
         except User.DoesNotExist:
             return Response({"error": "User not found."}, status=404)
+        
+        
     
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -239,7 +241,7 @@ def send_selected_rows(request):
             data = json.loads(request.body)
             selected_rows = data.get("selectedRow", {})
             image_paths = process_image_paths(selected_rows)
-            print("Image paths to process:", image_paths)
+            
             
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             results = radiply.utils.process_images(image_paths, device)
@@ -251,7 +253,7 @@ def send_selected_rows(request):
                     elif isinstance(value, torch.Tensor):
                         result[key] = value.item()
                 
-                selected_rows['img'] = result["filename"].split("/")[-1]
+                #selected_rows['img'] = result["filename"].split("/")[-1]
                 
                 # Check if the record already exists in Worklist
                 worklist_exists = Worklist.objects.filter(img_name=selected_rows['img']).exists()
@@ -267,7 +269,7 @@ def send_selected_rows(request):
                             "priority": "High",  
                             "imgpath": str(result["filename"]),  
                             "img_name": selected_rows['img'],
-                            "data_set_name": selected_rows['img']
+                            "data_set_name": selected_rows['dataSetName']
                         }
                     )
                     
@@ -297,6 +299,29 @@ def send_selected_rows(request):
                 else:
                     print(f"Skipping {selected_rows['img']} as it already exists in Worklist.")
 
+                heatmaps, original_img = radiply.utils.generate_heatmap3(image_paths)
+               
+            # Convert original image to bytes
+                original_img_bytes = image_to_base64(original_img)
+
+            # Create Heatmap object
+                heatmap_instance = Heatmap.objects.create(
+                    worklist=worklist,
+                    original_img=original_img_bytes
+                )
+
+            # Save each pathology heatmap to the correct field
+                for pathology, heatmap_img in heatmaps:
+                    heatmap_img_bytes = image_to_base64(heatmap_img)  # Convert to bytes
+                    field_name = pathology.lower().replace(" ", "_")  # Convert to field name format
+                
+                # Check if the field exists in the model
+                    if hasattr(heatmap_instance, field_name):
+                        setattr(heatmap_instance, field_name, heatmap_img_bytes)  # Set binary field value
+
+            # Save the updated heatmap instance
+                heatmap_instance.save()
+                
                 # Broadcast the updated row to all clients
                 channel_layer = get_channel_layer()
                 async_to_sync(channel_layer.group_send)(
@@ -326,7 +351,7 @@ def send_selected_options(request):
         selected_options = data.get("selectedOptions", [])
 
         # Print the selected options for debugging
-        print("Selected Options:", selected_options)
+       
         
         # Initialize a list to store the results
         combined_data = []
@@ -337,20 +362,20 @@ def send_selected_options(request):
             if option == 'NIH':
                 file_path = "/mnt/efs/common/radiply/Radiply Backend/nih.csv"
                 data_set_name = 'nih'
-                fieldnames = ['Finding Labels', 'Image Index', 'View Position']
+                fieldnames = ['Patient ID','Finding Labels', 'Image Index', 'View Position','Patient Age','Patient Gender']
             elif option == 'BBox_Pn_NIH':
-                print("i have entered")
+                
                 file_path = "/mnt/efs/common/radiply/data/external/NIH-Data/BBox_Pn_NIH.csv"
                 data_set_name = 'BBox_Pn_NIH'
                 fieldnames = ['Finding Label', 'Image Index']
             elif option == 'CHEX':
                 file_path = "/mnt/efs/common/radiply/Radiply Backend/chex.csv"
                 data_set_name = 'chex'
-                fieldnames = ['patientid', 'Path', 'view']
+                fieldnames = ['patientid', 'Path', 'view','Age','Sex']
             elif option == 'SIIM':
                 file_path = "/mnt/efs/common/radiply/Radiply Backend/siim.csv"
                 data_set_name = 'siim'
-                fieldnames = ['patientid', 'ImageId', 'view']
+                fieldnames = ['patientid', 'ImageId', 'view',]
             else:
                 continue  # Skip invalid options
 
@@ -362,31 +387,43 @@ def send_selected_options(request):
                         # Dynamically handle the dataset
                         if data_set_name == 'nih':
                             combined_data.append({
+                                'patient_ID':row['Patient ID'],
                                 'name': row['Finding Labels'],
                                 'img': row['Image Index'],
                                 'view': row['View Position'],
+                                'patient_age':row['Patient Age'],
+                                'patient_gender':row['Patient Gender'],
                                 'dataSetName': 'NIH'
                             })
                         elif data_set_name == 'BBox_Pn_NIH':
-                            print("i have entered2")
+                          
                             combined_data.append({
+                                'patient_ID':'',
                                 'name': row['Finding Label'],
                                 'img': row['Image Index'],
                                 'view': '',
+                                'patient_age':'',
+                                'patient_gender':'',
                                 'dataSetName': 'BBox_Pn_NIH'
                             })
                         elif data_set_name == 'chex':
                             combined_data.append({
+                                'patient_ID':row['patientid'],
                                 'name': row['patientid'],
                                 'img': row['Path'],
                                 'view': row['view'],
+                                'patient_age':row['Age'],
+                                'patient_gender':row['Sex'],
                                 'dataSetName': 'CHEX'
                             })
                         elif data_set_name == 'siim':
                             combined_data.append({
+                                'patient_ID':row['patientid'],
                                 'name': row['patientid'],
                                 'img': row['ImageId'],
                                 'view': '',
+                                'patient_age':'',
+                                'patient_gender':'',
                                 'dataSetName': 'SIIM'
                             })
 
@@ -420,18 +457,50 @@ def get_worklist_id(request):
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
 
+def image_to_base64Send(binary_data):
+    """Convert binary image data to a base64 string."""
+    if binary_data:
+        return base64.b64encode(binary_data).decode('utf-8')
+    return None
+
 @csrf_exempt
 def get_pathologies(request, worklist_id):
     try:
-        pathologies = Pathologies.objects.filter(worklist_id=worklist_id).values()
-        if pathologies.exists():
-            return JsonResponse(list(pathologies), safe=False, status=200)
-        return JsonResponse({"error": "No pathologies found"}, status=404)
+        # Fetch pathologies
+        pathologies = list(Pathologies.objects.filter(worklist_id=worklist_id).values())
+
+        # Fetch heatmap data
+        heatmap = Heatmap.objects.filter(worklist_id=worklist_id).first()
+
+        if heatmap:
+            heatmap_data = {
+                "original_img": image_to_base64Send(heatmap.original_img),
+                "pneumothorax": image_to_base64Send(heatmap.pneumothorax),
+                "consolidation": image_to_base64Send(heatmap.consolidation),
+                "enlarged_cardiomediastinum": image_to_base64Send(heatmap.enlarged_cardiomediastinum),
+                "lung_lesion": image_to_base64Send(heatmap.lung_lesion),
+                "pneumonia": image_to_base64Send(heatmap.pneumonia),
+                "infiltration": image_to_base64Send(heatmap.infiltration),
+                "effusion": image_to_base64Send(heatmap.effusion),
+                "atelectasis": image_to_base64Send(heatmap.atelectasis),
+                "cardiomegaly": image_to_base64Send(heatmap.cardiomegaly),
+                "edema": image_to_base64Send(heatmap.edema),
+                "lung_opacity": image_to_base64Send(heatmap.lung_opacity),
+                "fracture": image_to_base64Send(heatmap.fracture),
+                "mass": image_to_base64Send(heatmap.mass),
+                "nodule": image_to_base64Send(heatmap.nodule),
+                "emphysema": image_to_base64Send(heatmap.emphysema),
+                "fibrosis": image_to_base64Send(heatmap.fibrosis),
+                "pleural_thickening": image_to_base64Send(heatmap.pleural_thickening),
+                "hernia": image_to_base64Send(heatmap.hernia),
+            }
+        else:
+            heatmap_data = None  # No heatmap found
+
+        return JsonResponse({"pathologies": pathologies, "heatmap": heatmap_data}, safe=False, status=200)
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-
 
 
 @csrf_exempt
@@ -442,42 +511,54 @@ def generate_heatmap_view(request):
             data = json.loads(request.body)
             worklist_id = data.get('id')
             label = data.get('label')
-            print(f'worklist_id : {worklist_id}   :  label :{label}')
+           
 
             # Get imgpath using worklist_id from your database (e.g., Worklist model)
             worklist = Worklist.objects.get(id=worklist_id)
             imgpath = worklist.imgpath
-            print(f'imgpath : {imgpath}   :  label :{label}')
+         
 
-            # Assuming 'generate_heatmap' returns a heatmap image and the original image
-            heatmap_img, original_img =radiply.utils.generate_heatmap(imgpath, label)
-            print(f'heatmap_img : {heatmap_img}   :  original_img :{original_img}')
-            # Convert images to base64-encoded strings
-            heatmap_img_base64 = image_to_base64(heatmap_img)
-            original_img_base64 = image_to_base64(original_img)
+            # Generate heatmaps
+            heatmaps, original_img = radiply.utils.generate_heatmap(imgpath, label)
 
-            return JsonResponse({
-                'success': True,
-                'heatmapImg': heatmap_img_base64,
-                'originalImg': original_img_base64
-            })
+            # Convert original image to bytes
+            original_img_bytes = image_to_base64(original_img)
 
+            # Create Heatmap object
+            heatmap_instance = Heatmap.objects.create(
+                worklist=worklist,
+                original_img=original_img_bytes
+            )
+
+            # Save each pathology heatmap to the correct field
+            for pathology, heatmap_img in heatmaps:
+                heatmap_img_bytes = image_to_base64(heatmap_img)  # Convert to bytes
+                field_name = pathology.lower().replace(" ", "_")  # Convert to field name format
+                
+                # Check if the field exists in the model
+                if hasattr(heatmap_instance, field_name):
+                    setattr(heatmap_instance, field_name, heatmap_img_bytes)  # Set binary field value
+
+            # Save the updated heatmap instance
+            heatmap_instance.save()
+
+            return JsonResponse({"status": "success", "message": "Heatmaps saved successfully."})
+
+        except Worklist.DoesNotExist:
+            return JsonResponse({"status": "error", "message": "Worklist ID not found."}, status=404)
         except Exception as e:
-            print(f"Error: {e}")
-            return JsonResponse({'success': False, 'message': str(e)})
+            return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
 def image_to_base64(image):
-    # If the image is a PIL Image, convert it to a NumPy array
+    """Convert image (NumPy array) to base64-encoded bytes."""
     if isinstance(image, Image.Image):
         image = np.array(image)
-    
-    # Convert the image to a PIL image, then to base64
-    image = Image.fromarray(image.astype(np.uint8))
+
+    image = Image.fromarray(image.astype(np.uint8))  # Convert to PIL image
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode('latin1')
-    return img_str
-
+    
+    return buffered.getvalue()  
 
 
 
@@ -493,7 +574,7 @@ def get_csvreport_data(request):
         try:
             data = json.loads(request.body)
             report_name = data.get("reportName")
-            print(f'report_name: {report_name}')
+           
 
             if not report_name:
                 return JsonResponse({"error": "Missing reportName"}, status=400)
@@ -511,14 +592,14 @@ def get_csvreport_data(request):
 
             # Find row where 'Image Index' matches the reportName
             row = df[df["Image Index"].astype(str).str.strip() == str(report_name).strip()]
-            print(f'row: {row}')
+            
 
             if row.empty:
                 return JsonResponse({"error": "Report not found"}, status=404)
 
             # Convert row to dictionary and return as JSON
             row_dict = row.to_dict(orient="records")[0]
-            print(f'row_dict: {row_dict}')
+           
 
             return JsonResponse({"success": True, "data": row_dict})
 
