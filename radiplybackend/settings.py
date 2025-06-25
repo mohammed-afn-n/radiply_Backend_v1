@@ -42,7 +42,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken',
-    'channels'
+    'channels',
+    'app'
 ]
 
 MIDDLEWARE = [
@@ -95,7 +96,6 @@ DATABASES = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
-
 }
 
 
@@ -141,7 +141,7 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-AUTH_USER_MODEL = 'fetchimage.User'
+AUTH_USER_MODEL = 'app.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

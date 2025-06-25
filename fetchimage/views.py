@@ -1,9 +1,6 @@
 # D:\Radiply Backend\fetchimage\views.py
 from rest_framework import viewsets
-from .serializers import UserSerializer
 from rest_framework import generics
-from fetchimage.models import User
-from rest_framework.response import Response
 from rest_framework import viewsets
 import csv
 from django.http import JsonResponse
@@ -13,7 +10,8 @@ from django.http import FileResponse
 from django.http import JsonResponse, Http404, HttpResponse
 from fetchimage.models import DataSet, Pathologies
 from fetchimage.serializers import DataSetSerializer,PathologiesSerializer
-import radiply
+import radiply as radiply
+
 from rest_framework import viewsets, status
 from django.views.decorators.csrf import csrf_exempt
 import json
@@ -30,9 +28,23 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import base64
 from django.utils import timezone
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import (
+    IsAuthenticated,
+    IsAdminUser,
+    AllowAny
+)
+from django.contrib.auth.hashers import check_password
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.decorators import action
+import os
+
+
 d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
 def get_csv_data(request):
-    file_path = "/mnt/efs/common/radiply/combined_test_dataset_details.csv"
+    file_path = "/mnt/efs/common/radiply/radiply_v0/combined_test_dataset_details.csv"
     data = []
     
     try:
@@ -48,25 +60,9 @@ def get_csv_data(request):
         return JsonResponse(data, safe=False)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import (
-    IsAuthenticated,
-    IsAdminUser,
-    AllowAny
-)
-
-from django.contrib.auth.hashers import check_password
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.decorators import action
-
-import os
 
 
 
-
-IMAGE_DIR = r"C:/Users/moham/Downloads"
 transforms = torchvision.transforms.Compose([radiply.datasets.XRayCenterCrop(), radiply.datasets.XRayResizer(224)])
 def get_image(request, image_name):
     data_set_name = request.GET.get("dataSetName", None)
@@ -89,7 +85,8 @@ def get_image(request, image_name):
         imgid = d.csv["Path"].iloc[image_index]
         imgid = imgid.replace("CheXpert-v1.0-small/", "").replace("CheXpert-v1.0/", "")
         image_path = d.imgpath / imgid
-       
+        #image_path ="/mnt/efs/common/radiply/data/external/CheXpert-mirrored-Data/"+imgid
+        print(f"d.imgpath {d.imgpath}")
         
     elif data_set_name == "SIIM":
         d = radiply.datasets.SIIM_Pneumothorax_Dataset(transform=transforms, data_aug=True, unique_patients=False)
@@ -146,41 +143,7 @@ class PathologiesViewSet(viewsets.ModelViewSet):
     # def get_queryset(self):
     #     queryset.filter()
 
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-    permission_classes=[IsAuthenticated]
-    
-    def create(self, request, *args, **kwargs):
-        # Get data from the request
-        data = request.data
-
-        # Set default values for admin user creation
-        data['is_staff'] = True  # Set the user as staff
-        data['is_superuser'] = True  # Set the user as a superuser
-        data['is_active'] = True 
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    @action(
-        detail=False,
-        methods=['GET'],
-        url_path='login-user'
-    )
-    def get_user(self, request, *args, **kwargs):
-        
-        try:
-            user = self.get_queryset().get(id=request.user.id)
-            serializer = self.get_serializer(user)
-            return Response(serializer.data)
-        except User.DoesNotExist:
-            return Response({"error": "User not found."}, status=404)
-        
-        
-    
+  
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def update_password(request):
@@ -221,6 +184,8 @@ def process_image_paths(selected_rows):
         sanitized_image_name = image_name.replace("!", "/")
         image_index = d.csv[d.csv["Path"] == sanitized_image_name].index[0]
         imgid = d.csv["Path"].iloc[image_index].replace("CheXpert-v1.0-small/", "").replace("CheXpert-v1.0/", "")
+        print(f"d.imgpath {d.imgpath}")
+
         image_path = d.imgpath / imgid
         image_paths.append(image_path)
     
@@ -360,20 +325,20 @@ def send_selected_options(request):
         for option in selected_options:
             # Determine the file path and dataset based on selected option
             if option == 'NIH':
-                file_path = "/mnt/efs/common/radiply/Radiply Backend/nih.csv"
+                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/nih.csv"
                 data_set_name = 'nih'
                 fieldnames = ['Patient ID','Finding Labels', 'Image Index', 'View Position','Patient Age','Patient Gender']
             elif option == 'BBox_Pn_NIH':
                 
-                file_path = "/mnt/efs/common/radiply/data/external/NIH-Data/BBox_Pn_NIH.csv"
+                file_path = "/mnt/efs/common/radiply/radiply_v0/data/external/NIH-Data/BBox_Pn_NIH.csv"
                 data_set_name = 'BBox_Pn_NIH'
                 fieldnames = ['Finding Label', 'Image Index']
             elif option == 'CHEX':
-                file_path = "/mnt/efs/common/radiply/Radiply Backend/chex.csv"
+                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/chex.csv"
                 data_set_name = 'chex'
                 fieldnames = ['patientid', 'Path', 'view','Age','Sex']
             elif option == 'SIIM':
-                file_path = "/mnt/efs/common/radiply/Radiply Backend/siim.csv"
+                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/siim.csv"
                 data_set_name = 'siim'
                 fieldnames = ['patientid', 'ImageId', 'view',]
             else:
@@ -568,7 +533,7 @@ import pandas as pd
 
 @csrf_exempt
 def get_csvreport_data(request):
-    CSV_FILE_PATH = "/mnt/efs/common/radiply/data/external/NIH-Data/BBox_Pn_NIH.csv"
+    CSV_FILE_PATH = "/mnt/efs/common/radiply/radiply_v0/data/external/NIH-Data/BBox_Pn_NIH.csv"
     
     if request.method == "POST":
         try:
@@ -609,7 +574,5 @@ def get_csvreport_data(request):
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "Invalid request method"}, status=405)
-
-
 
 

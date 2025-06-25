@@ -29,10 +29,12 @@ from rest_framework_simplejwt.views import (
 
 from django.contrib import admin
 from django.urls import path, include
+from app.routers import app_router
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('fetchimage.urls')),  
+    path('api/', include('fetchimage.urls')),
+    path('api/', include(app_router.urls)),   
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]

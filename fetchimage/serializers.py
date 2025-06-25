@@ -1,13 +1,7 @@
 #D:\Radiply Backend\fetchimage\serializers.py
 from rest_framework import serializers
 # from django.contrib.auth.models import User
-from fetchimage.models import User, DataSet,Pathologies,Worklist
-
-
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        exclude = ['password']
+from fetchimage.models import DataSet,Pathologies,Worklist
 
 class DataSetSerializer(serializers.ModelSerializer):  
 
