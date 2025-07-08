@@ -1,7 +1,7 @@
 # D:\Radiply Backend\fetchimage\views.py
-from rest_framework import viewsets
+from rest_framework import viewsets,filters
 from rest_framework import generics
-from rest_framework import viewsets
+
 import csv
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -11,14 +11,14 @@ from django.http import JsonResponse, Http404, HttpResponse
 from fetchimage.models import DataSet, Pathologies
 from fetchimage.serializers import DataSetSerializer,PathologiesSerializer
 import radiply as radiply
-
+import requests
 from rest_framework import viewsets, status
 from django.views.decorators.csrf import csrf_exempt
 import json
 import torch
 import numpy as np
-from fetchimage.models import Worklist, Pathologies,Heatmap
-from .serializers import WorklistSerializer
+from fetchimage.models import Worklist, Pathologies,Heatmap,StudyInstance,AIResult
+from .serializers import WorklistSerializer,StudyInstanceSerializer
 import torchvision
 from PIL import Image
 import pydicom
@@ -40,11 +40,15 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.decorators import action
 import os
+from io import BytesIO
+
+from django_filters.rest_framework import DjangoFilterBackend
+
 
 
 d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
-def get_csv_data(request):
-    file_path = "/mnt/efs/common/radiply/radiply_v0/combined_test_dataset_details.csv"
+def get_csv_data(request):  
+    file_path = "/mnt/efs/common/radiply/data/external/NIH-Data/Data_Entry_2017_v2020.csv"
     data = []
     
     try:
@@ -205,109 +209,123 @@ def send_selected_rows(request):
         try:
             data = json.loads(request.body)
             selected_rows = data.get("selectedRow", {})
-            image_paths = process_image_paths(selected_rows)
-            
-            
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            results = radiply.utils.process_images(image_paths, device)
-            
-            for result in results:
-                for key, value in result.items():
-                    if isinstance(value, np.float32):
-                        result[key] = float(value)
-                    elif isinstance(value, torch.Tensor):
-                        result[key] = value.item()
-                
-                #selected_rows['img'] = result["filename"].split("/")[-1]
-                
-                # Check if the record already exists in Worklist
-                worklist_exists = Worklist.objects.filter(img_name=selected_rows['img']).exists()
-                
-                if not worklist_exists:
-                    worklist, _ = Worklist.objects.get_or_create(
-                        study_name=selected_rows['img'],  
-                        defaults={
-                            "study_start_date": "2023-01-01",  
-                            "study_end_date": "2023-01-01",  
-                            "modality": "Xray", 
-                            "status": "Pending",  
-                            "priority": "High",  
-                            "imgpath": str(result["filename"]),  
-                            "img_name": selected_rows['img'],
-                            "data_set_name": selected_rows['dataSetName']
-                        }
-                    )
-                    
-                    Pathologies.objects.get_or_create(
-                        worklist=worklist,
-                        defaults={
-                            "atelectasis": result.get("Atelectasis", 0.0),
-                            "cardiomegaly": result.get("Cardiomegaly", 0.0),
-                            "consolidation": result.get("Consolidation", 0.0),
-                            "edema": result.get("Edema", 0.0),
-                            "effusion": result.get("Effusion", 0.0),
-                            "emphysema": result.get("Emphysema", 0.0),
-                            "fibrosis": result.get("Fibrosis", 0.0),
-                            "hernia": result.get("Hernia", 0.0),
-                            "infiltration": result.get("Infiltration", 0.0),
-                            "mass": result.get("Mass", 0.0),
-                            "nodule": result.get("Nodule", 0.0),
-                            "pleural_thickening": result.get("Pleural_Thickening", 0.0),
-                            "pneumonia": result.get("Pneumonia", 0.0),
-                            "pneumothorax": result.get("Pneumothorax", 0.0),
-                            "enlarged_cardiomediastinum": result.get("Enlarged Cardiomediastinum", 0.0),
-                            "fracture": result.get("Fracture", 0.0),
-                            "lung_lesion": result.get("Lung Lesion", 0.0),
-                            "lung_opacity": result.get("Lung Opacity", 0.0),
-                        }
-                    )
-                else:
-                    print(f"Skipping {selected_rows['img']} as it already exists in Worklist.")
+            instance_id = selected_rows.get('instance_id')
+            if not instance_id:
+                return JsonResponse({"error": "Missing instance_id"}, status=400)
 
-                heatmaps, original_img = radiply.utils.generate_heatmap3(image_paths)
-               
-            # Convert original image to bytes
-                original_img_bytes = image_to_base64(original_img)
+            # Step 1: Fetch DICOM from Orthanc
+            orthanc_url = f"http://3.111.210.119:8042/instances/{instance_id}/file"
+            orthanc_response = requests.get(orthanc_url)
+            if orthanc_response.status_code != 200:
+                return JsonResponse({"error": "Failed to fetch from Orthanc"}, status=500)
 
-            # Create Heatmap object
-                heatmap_instance = Heatmap.objects.create(
-                    worklist=worklist,
-                    original_img=original_img_bytes
+            dicom_bytes = BytesIO(orthanc_response.content)
+            dicom_data = pydicom.dcmread(dicom_bytes)
+
+            if not hasattr(dicom_data, "PixelData"):
+                return JsonResponse({"error": "No image data in DICOM"}, status=400)
+
+            pixel_array1 = dicom_data.pixel_array.astype(np.float32)
+            # pixel_array = dicom_data.pixel_array
+
+            # # Normalize and convert to uint8 for image preview
+            # if pixel_array.dtype != np.uint8:
+            #     pixel_array = (pixel_array - pixel_array.min()) / (pixel_array.ptp() or 1) * 255
+            #     pixel_array = pixel_array.astype(np.uint8)
+
+            # if len(pixel_array.shape) == 2:
+            #     image = Image.fromarray(pixel_array)
+            # elif len(pixel_array.shape) == 3:
+            #     image = Image.fromarray(pixel_array, "RGB")
+            # else:
+            #     return JsonResponse({"error": "Unsupported image format"}, status=400)
+
+            # buffered = BytesIO()
+            # image.save(buffered, format="JPEG")
+            # image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            # Step 2: Check if AIResult already exists
+            study_instance = StudyInstance.objects.filter(instance_id=instance_id).first()
+            if not study_instance:
+                return JsonResponse({"error": "StudyInstance not found for instance_id."}, status=404)
+
+            existing_result = AIResult.objects.filter(study_instance=study_instance).first()
+
+            if existing_result:
+                # If result exists, return it directly
+                results = [{
+                    field.name: getattr(existing_result, field.name)
+                    for field in AIResult._meta.fields
+                    if field.name not in ['id', 'study_instance', 'created_at']
+                }]
+            else:
+                # Else, process using AI
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                results = radiply.utils.process_images_ai1(pixel_array1, device)
+
+                if not results:
+                    return JsonResponse({"error": "AI processing failed or returned no data."}, status=500)
+
+                # Convert values to Python-native types
+                for result in results:
+                    for key, value in result.items():
+                        if isinstance(value, (np.float32, np.float64)):
+                            result[key] = float(value)
+                        elif isinstance(value, torch.Tensor):
+                            result[key] = value.item()
+
+                print(results, 'results')
+                ai_output = results[0]  # Only save the first result
+                print(ai_output, 'ai_output')
+
+                AIResult.objects.create(
+                    study_instance=study_instance,
+                    atelectasis=ai_output.get("Atelectasis", 0.0),
+                    cardiomegaly=ai_output.get("Cardiomegaly", 0.0),
+                    consolidation=ai_output.get("Consolidation", 0.0),
+                    edema=ai_output.get("Edema", 0.0),
+                    effusion=ai_output.get("Effusion", 0.0),
+                    emphysema=ai_output.get("Emphysema", 0.0),
+                    fibrosis=ai_output.get("Fibrosis", 0.0),
+                    hernia=ai_output.get("Hernia", 0.0),
+                    infiltration=ai_output.get("Infiltration", 0.0),
+                    mass=ai_output.get("Mass", 0.0),
+                    nodule=ai_output.get("Nodule", 0.0),
+                    pleural_thickening=ai_output.get("Pleural_Thickening", 0.0),
+                    pneumonia=ai_output.get("Pneumonia", 0.0),
+                    pneumothorax=ai_output.get("Pneumothorax", 0.0),
+                    enlarged_cardiomediastinum=ai_output.get("Enlarged Cardiomediastinum", 0.0),
+                    fracture=ai_output.get("Fracture", 0.0),
+                    lung_lesion=ai_output.get("Lung Lesion", 0.0),
+                    lung_opacity=ai_output.get("Lung Opacity", 0.0),
                 )
 
-            # Save each pathology heatmap to the correct field
-                for pathology, heatmap_img in heatmaps:
-                    heatmap_img_bytes = image_to_base64(heatmap_img)  # Convert to bytes
-                    field_name = pathology.lower().replace(" ", "_")  # Convert to field name format
-                
-                # Check if the field exists in the model
-                    if hasattr(heatmap_instance, field_name):
-                        setattr(heatmap_instance, field_name, heatmap_img_bytes)  # Set binary field value
+                study_instance.status = "Finalized"
+                study_instance.save()
 
-            # Save the updated heatmap instance
-                heatmap_instance.save()
-                
-                # Broadcast the updated row to all clients
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    "group_row_updates",
-                    {
-                        'type': 'row_update_message',
-                        'message': {
-                            'action': 'update_row',
-                            'row_id': selected_rows['img'],
-                            'new_data': {
-                                'status': 'Completed'
-                            }
+            # Step 3: Broadcast update
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "group_row_updates",
+                {
+                    'type': 'row_update_message',
+                    'message': {
+                        'action': 'update_row',
+                        'row_id': selected_rows.get('id'),
+                        'new_data': {
+                            'status': 'Finalized'
                         }
                     }
-                )
+                }
+            )
 
-            return JsonResponse({"success": True, "results": results}, safe=False)
-        
+            return JsonResponse({
+                "success": True
+            }, safe=False)
+
         except Exception as e:
             print(f"Error occurred: {e}")
-            return JsonResponse({"success": False, "error": str(e)}, status=500)        
+            return JsonResponse({"success": False, "error": str(e)}, status=500)
 
 @csrf_exempt
 def send_selected_options(request):
@@ -576,3 +594,165 @@ def get_csvreport_data(request):
     return JsonResponse({"error": "Invalid request method"}, status=405)
 
 
+
+#new 
+
+
+class CustomPageNumberPagination(PageNumberPagination):
+    page_size = 15
+    page_size_query_param = 'page_size'
+
+class StudyInstanceViewSet(viewsets.ModelViewSet):
+    queryset = StudyInstance.objects.all().order_by('-study_date')
+    serializer_class = StudyInstanceSerializer
+    pagination_class = CustomPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["study_id", "series_id", "instance_id", "accession_number", "study_date", "study_description", "patient_id", "patient_name", "patient_sex", "patient_birth_date", "modality", "view_position", "body_part_examined", "gender", "created_at", "status", "received_at", "age"]
+    search_fields = ['patient_id', 'patient_name', 'accession_number', 'study_description']
+    
+    
+@csrf_exempt
+def get_image_from_orthanc(request):
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            instance_id = data.get("instance_id")
+
+            if not instance_id:
+                return HttpResponseBadRequest("Missing instance_id")
+
+            # Step 1: Get raw DICOM file from Orthanc
+            orthanc_url = f"http://3.111.210.119:8042/instances/{instance_id}/file"
+            orthanc_response = requests.get(orthanc_url)
+
+            if orthanc_response.status_code != 200:
+                return JsonResponse({"error": "Failed to fetch from Orthanc"}, status=500)
+
+            # Step 2: Convert DICOM to JPEG
+            dicom_bytes = BytesIO(orthanc_response.content)
+            dicom_data = pydicom.dcmread(dicom_bytes)
+
+            # Check if pixel data exists
+            if not hasattr(dicom_data, "PixelData"):
+                return JsonResponse({"error": "No image data in DICOM"}, status=400)
+
+            # Get pixel array and convert to uint8
+            pixel_array = dicom_data.pixel_array
+
+            # Normalize pixel data to 0-255
+            if pixel_array.dtype != np.uint8:
+                pixel_array = (pixel_array - pixel_array.min()) / (pixel_array.ptp() or 1) * 255
+                pixel_array = pixel_array.astype(np.uint8)
+
+            # Handle grayscale or RGB
+            if len(pixel_array.shape) == 2:  # Grayscale
+                image = Image.fromarray(pixel_array)
+            elif len(pixel_array.shape) == 3:  # RGB
+                image = Image.fromarray(pixel_array, "RGB")
+            else:
+                return JsonResponse({"error": "Unsupported image format"}, status=400)
+
+            # Step 3: Save JPEG
+            # Step 3: Convert image to base64 directly in memory
+            buffered = BytesIO()
+            image.save(buffered, format="JPEG")
+            image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            # Step 4: Return base64 to frontend
+            return JsonResponse({
+                "image_data": image_base64
+            })
+
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+    return HttpResponseBadRequest("Invalid request method")
+
+
+@csrf_exempt
+def get_report(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            selected_rows = data.get("selectedRow", {})
+            instance_id = selected_rows.get('instance_id')
+            if not instance_id:
+                return JsonResponse({"error": "Missing instance_id"}, status=400)
+
+            # Step 1: Fetch DICOM from Orthanc
+            orthanc_url = f"http://3.111.210.119:8042/instances/{instance_id}/file"
+            orthanc_response = requests.get(orthanc_url)
+            if orthanc_response.status_code != 200:
+                return JsonResponse({"error": "Failed to fetch from Orthanc"}, status=500)
+
+            dicom_bytes = BytesIO(orthanc_response.content)
+            dicom_data = pydicom.dcmread(dicom_bytes)
+
+            if not hasattr(dicom_data, "PixelData"):
+                return JsonResponse({"error": "No image data in DICOM"}, status=400)
+
+            pixel_array1 = dicom_data.pixel_array.astype(np.float32)
+            pixel_array = dicom_data.pixel_array
+
+            # Normalize and convert to uint8 for image preview
+            if pixel_array.dtype != np.uint8:
+                pixel_array = (pixel_array - pixel_array.min()) / (pixel_array.ptp() or 1) * 255
+                pixel_array = pixel_array.astype(np.uint8)
+
+            if len(pixel_array.shape) == 2:
+                image = Image.fromarray(pixel_array)
+            elif len(pixel_array.shape) == 3:
+                image = Image.fromarray(pixel_array, "RGB")
+            else:
+                return JsonResponse({"error": "Unsupported image format"}, status=400)
+
+            buffered = BytesIO()
+            image.save(buffered, format="JPEG")
+            image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            # Step 2: Check if AIResult already exists
+            study_instance = StudyInstance.objects.filter(instance_id=instance_id).first()
+            if not study_instance:
+                return JsonResponse({"error": "StudyInstance not found for instance_id."}, status=404)
+
+            existing_result = AIResult.objects.filter(study_instance=study_instance).first()
+            results=[{}]
+            if existing_result:
+                # If result exists, return it directly
+                results = [{
+                    field.name: getattr(existing_result, field.name)
+                    for field in AIResult._meta.fields
+                    if field.name not in ['id', 'study_instance', 'created_at']
+                }]
+            
+
+            return JsonResponse({
+                "success": True,
+                "results": results,
+                "image_base64": image_base64
+            }, safe=False)
+
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            return JsonResponse({"success": False, "error": str(e)}, status=500)
+        
+ORTHANC_URL = 'http://3.111.210.119:8042/instances'     
+@csrf_exempt
+def upload_dicom(request):
+    if request.method == 'POST':
+        print('hi')
+        files = request.FILES.getlist('dicom_files')
+        responses = []
+
+        for file in files:
+            response = requests.post(
+                ORTHANC_URL,
+                headers={'Content-Type': 'application/dicom'},
+                data=file.read()
+            )
+            responses.append(response.json())
+
+        return JsonResponse({'status': 'success', 'details': responses})
+
+    return JsonResponse({'error': 'Invalid request'}, status=400)

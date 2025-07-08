@@ -1,3 +1,4 @@
+#/mnt/efs/common/radiply/Worklist/radiplyBackend/app/views.py
 from django.shortcuts import render
 from .serializers import UserSerializer, UserListSerializer
 from rest_framework.decorators import action
@@ -17,6 +18,7 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     # filter_backends = [SearchFilter]
     # search_fields = ['username', 'email']
+    
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -37,6 +39,7 @@ class UserViewSet(viewsets.ModelViewSet):
         try:
             user = self.get_queryset().get(id=request.user.id)
             serializer = self.get_serializer(user)
+            print
             return Response(serializer.data)
         except User.DoesNotExist:
             return Response({"error": "User not found."}, status=404)

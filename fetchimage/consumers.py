@@ -38,8 +38,16 @@ class RowUpdateConsumer(AsyncWebsocketConsumer):
     # Receive message from the group
     async def row_update_message(self, event):
         message = event['message']
-
+        print("hi")
         # Send message to WebSocket
         await self.send(text_data=json.dumps({
+            
             'message': message
         }))
+        
+    async def row_update_message1(self, event):
+        message = event["message"]
+        await self.send(text_data=json.dumps({
+            "message": message
+        }))
+# fetchimage/consumers.py

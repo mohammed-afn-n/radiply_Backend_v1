@@ -1,3 +1,4 @@
+#/mnt/efs/common/radiply/Worklist/radiplyBackend/app/serializers.py
 from rest_framework import serializers
 from .models import User
 
@@ -5,7 +6,7 @@ from .models import User
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields =  ['id', 'username', 'email', 'password', 'role'] 
+        fields = '__all__' 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -39,10 +40,35 @@ class UserSerializer(serializers.ModelSerializer):
                 validated_data.pop(attr)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        if password: 
+        if password is not None and password.strip() != "": 
             instance.set_password(password)
         instance.save()
         for attr, value in m2m_fields.items():
             getattr(instance, attr).set(value)
 
         return instance
+    
+    
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.conf import settings
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        # Add custom claims
+        data['alert_before_expiration'] = settings.SIMPLE_JWT['ALERT_BEFORE_EXPIRATION'].total_seconds() * 1000
+        # Include refresh token in response
+        data['refresh'] = data.pop('refresh', None)
+        return data
+
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+import logging
+
+logger = logging.getLogger(__name__)
+
+class CustomTokenRefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        logger.debug(f"Refresh Token Received: {attrs.get('refresh')}")
+        data = super().validate(attrs)
+        data['alert_before_expiration'] = settings.SIMPLE_JWT['ALERT_BEFORE_EXPIRATION'].total_seconds() * 1000
+        return data

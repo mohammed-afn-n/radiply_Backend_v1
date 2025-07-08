@@ -86,3 +86,50 @@ class Heatmap(models.Model):
 
     def __str__(self):
         return f"{self.worklist.id} - {self.generated_at}"
+    
+    
+class StudyInstance(models.Model):
+    id = models.AutoField(primary_key=True)
+    study_id = models.CharField(max_length=255)
+    series_id = models.CharField(max_length=255)
+    instance_id = models.CharField(max_length=255)
+    accession_number = models.CharField(max_length=255, blank=True)
+    study_date = models.CharField(max_length=20, blank=True)
+    study_description = models.TextField(blank=True)
+    patient_id = models.CharField(max_length=255, blank=True)
+    patient_name = models.CharField(max_length=255, blank=True)
+    patient_sex = models.CharField(max_length=10, blank=True)
+    patient_birth_date = models.CharField(max_length=20, blank=True)
+    modality = models.CharField(max_length=50, blank=True)
+    view_position = models .CharField(max_length=50, blank=True)
+    body_part_examined = models.CharField(max_length=100, blank=True)
+    gender = models.CharField(max_length=10, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=50, default='Unread') # or PROCESSING, COMPLETED
+    received_at = models.DateTimeField(null=True, blank=True)
+    age = models.IntegerField(null=True, blank=True)
+
+class AIResult(models.Model):
+    id = models.AutoField(primary_key=True)
+    study_instance = models.ForeignKey(StudyInstance, on_delete=models.CASCADE, related_name="results")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Example AI output fields
+    atelectasis = models.FloatField(default=0.0)
+    cardiomegaly = models.FloatField(default=0.0)
+    consolidation = models.FloatField(default=0.0)
+    edema = models.FloatField(default=0.0)
+    effusion = models.FloatField(default=0.0)
+    emphysema = models.FloatField(default=0.0)
+    fibrosis = models.FloatField(default=0.0)
+    hernia = models.FloatField(default=0.0)
+    infiltration = models.FloatField(default=0.0)
+    mass = models.FloatField(default=0.0)
+    nodule = models.FloatField(default=0.0)
+    pleural_thickening = models.FloatField(default=0.0)
+    pneumonia = models.FloatField(default=0.0)
+    pneumothorax = models.FloatField(default=0.0)
+    enlarged_cardiomediastinum = models.FloatField(default=0.0)
+    fracture = models.FloatField(default=0.0)
+    lung_lesion = models.FloatField(default=0.0)
+    lung_opacity = models.FloatField(default=0.0)
