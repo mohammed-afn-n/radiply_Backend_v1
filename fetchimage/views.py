@@ -10,7 +10,7 @@ from django.http import FileResponse
 from django.http import JsonResponse, Http404, HttpResponse
 from fetchimage.models import DataSet, Pathologies
 from fetchimage.serializers import DataSetSerializer,PathologiesSerializer
-import radiply as radiply
+
 import requests
 from rest_framework import viewsets, status
 from django.views.decorators.csrf import csrf_exempt
@@ -34,100 +34,20 @@ from rest_framework.permissions import (
     IsAdminUser,
     AllowAny
 )
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth.hashers import check_password, make_password
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.decorators import action
 import os
 from io import BytesIO
-
+import torchxrayvision as xrv
 from django_filters.rest_framework import DjangoFilterBackend
 
 
 
-d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
-def get_csv_data(request):  
-    file_path = "/mnt/efs/common/radiply/data/external/NIH-Data/Data_Entry_2017_v2020.csv"
-    data = []
-    
-    try:
-        with open(file_path, mode='r', encoding='utf-8') as file:
-            csv_reader = csv.DictReader(file)
-            for row in csv_reader:
-                data.append({
-                    'name': row['Finding Labels'],
-                    'img': row['Image Index'],
-                    'view':row['View Position'],
-                    'dataSetName': 'NIH'
-                })
-        return JsonResponse(data, safe=False)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
 
-
-
-transforms = torchvision.transforms.Compose([radiply.datasets.XRayCenterCrop(), radiply.datasets.XRayResizer(224)])
-def get_image(request, image_name):
-    data_set_name = request.GET.get("dataSetName", None)
- 
-
-    if not data_set_name:
-        return JsonResponse({"error": "dataSetName parameter is required"}, status=400)
-
-    if data_set_name == "NIH":
-        d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
-        image_index = d.csv[d.csv["Image Index"] == image_name].index[0]
-        image_path = d.imgpath / d.csv["Image Index"].iloc[image_index]
-
-    elif data_set_name == "CHEX":
-        d = radiply.datasets.CheX_Dataset(transform=transforms, data_aug=True, unique_patients=False, views=["PA", "AP", "L"])
-        sanitized_image_name = image_name.replace("!", "/")
-       
-        image_index = d.csv[d.csv["Path"] == sanitized_image_name].index[0]
-        
-        imgid = d.csv["Path"].iloc[image_index]
-        imgid = imgid.replace("CheXpert-v1.0-small/", "").replace("CheXpert-v1.0/", "")
-        image_path = d.imgpath / imgid
-        #image_path ="/mnt/efs/common/radiply/data/external/CheXpert-mirrored-Data/"+imgid
-        print(f"d.imgpath {d.imgpath}")
-        
-    elif data_set_name == "SIIM":
-        d = radiply.datasets.SIIM_Pneumothorax_Dataset(transform=transforms, data_aug=True, unique_patients=False)
-        image_id = image_name
-        image_index = d.csv[d.csv["ImageId"] == image_id].index[0]
-        imgid = d.csv['ImageId'].iloc[image_index]
-        img_path = d.file_map[imgid + ".dcm"]
-        
-        # Read the DICOM image
-        dicom_img = pydicom.dcmread(img_path)
-        img_array = dicom_img.pixel_array  # Get NumPy array
-
-        # Convert to 8-bit grayscale
-        img_array = (img_array / img_array.max() * 255).astype(np.uint8)
-
-        # Convert NumPy array to PIL image
-        img = Image.fromarray(img_array)
-
-        # Save image to buffer
-        img_io = io.BytesIO()
-        img.save(img_io, format="PNG")
-        img_io.seek(0)
-
-        # Read image data and convert to 'latin1' encoded string
-        img_data = img_io.read().decode("latin1")
-
-        return JsonResponse({"image": img_data})
-
-    else:
-        return JsonResponse({"error": "Invalid dataSetName"}, status=400)
-
-    # For NIH and CHEX, check if the image exists and return it
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as img:
-            return JsonResponse({"image": img.read().decode("latin1")})
-    else:
-        raise Http404("Image not found")
 
 
 # class DataSetPagination(PageNumberPagination):
@@ -148,59 +68,43 @@ class PathologiesViewSet(viewsets.ModelViewSet):
     #     queryset.filter()
 
   
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def update_password(request):
-    user = request.user
     data = request.data
 
+    user_id = data.get('user_id')
     current_password = data.get('current_password')
     new_password = data.get('new_password')
 
-    if not current_password or not new_password:
-        return Response({"error": "Both current and new passwords are required."}, status=400)
+    if not user_id or not current_password or not new_password:
+        return Response({"error": "User ID, current password, and new password are required."}, status=400)
 
-    if not check_password(current_password, user.password):
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "User not found."}, status=404)
+
+    # Only allow the user to update their own password, or add extra logic for admins
+    if request.user.id != user.id and not request.user.is_superuser:
+        return Response({"error": "You are not authorized to update this user's password."}, status=403)
+
+    if not user.check_password(current_password):
         return Response({"error": "Current password is incorrect."}, status=400)
 
     user.set_password(new_password)
     user.save()
+
     return Response({"message": "Password updated successfully!"}, status=200)
 
-def process_image_paths(selected_rows):
-    image_paths = []
-    image_name = selected_rows.get("img")
-    dataset_name = selected_rows.get("dataSetName")
-    
-    if dataset_name == "NIH":
-        d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
-        image_index = d.csv[d.csv["Image Index"] == image_name].index[0]
-        image_path = d.imgpath / d.csv["Image Index"].iloc[image_index]
-        image_paths.append(image_path)
-    if dataset_name == "BBox_Pn_NIH":
-        d = radiply.datasets.NIH_Dataset(views=["PA", "AP", "L"], unique_patients=False)
-        image_index = d.csv[d.csv["Image Index"] == image_name].index[0]
-        image_path = d.imgpath / d.csv["Image Index"].iloc[image_index]
-        image_paths.append(image_path)
-    
-    elif dataset_name == "CHEX":
-        d = radiply.datasets.CheX_Dataset(transform=None, data_aug=True, unique_patients=False, views=["PA", "AP", "L"])
-        sanitized_image_name = image_name.replace("!", "/")
-        image_index = d.csv[d.csv["Path"] == sanitized_image_name].index[0]
-        imgid = d.csv["Path"].iloc[image_index].replace("CheXpert-v1.0-small/", "").replace("CheXpert-v1.0/", "")
-        print(f"d.imgpath {d.imgpath}")
 
-        image_path = d.imgpath / imgid
-        image_paths.append(image_path)
-    
-    elif dataset_name == "SIIM":
-        d = radiply.datasets.SIIM_Pneumothorax_Dataset(transform=None, data_aug=True, unique_patients=False)
-        image_index = d.csv[d.csv["ImageId"] == image_name].index[0]
-        imgid = d.csv['ImageId'].iloc[image_index]
-        image_path = d.file_map[imgid + ".dcm"]
-        image_paths.append(image_path)
-    
-    return image_paths
 
 
 @csrf_exempt
@@ -261,7 +165,7 @@ def send_selected_rows(request):
             else:
                 # Else, process using AI
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                results = radiply.utils.process_images_ai1(pixel_array1, device)
+                results =process_images_ai1(pixel_array1, device)
 
                 if not results:
                     return JsonResponse({"error": "AI processing failed or returned no data."}, status=500)
@@ -326,95 +230,66 @@ def send_selected_rows(request):
         except Exception as e:
             print(f"Error occurred: {e}")
             return JsonResponse({"success": False, "error": str(e)}, status=500)
+default_pathologies = [
+    "Atelectasis",
+    "Consolidation",
+    "Infiltration",
+    "Pneumothorax",
+    "Edema",
+    "Emphysema",
+    "Fibrosis",
+    "Effusion",
+    "Pneumonia",
+    "Pleural_Thickening",
+    "Cardiomegaly",
+    "Nodule",
+    "Mass",
+    "Hernia",
+    "Lung Lesion",
+    "Fracture",
+    "Lung Opacity",
+    "Enlarged Cardiomediastinum",
+]
+def process_images_ai1(image, device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")):
+    outputs = []
 
-@csrf_exempt
-def send_selected_options(request):
-    if request.method == "POST":
-        data = json.loads(request.body)
-        selected_options = data.get("selectedOptions", [])
+    # Normalize image
+    img = xrv.utils.normalize(image, image.max())
 
-        # Print the selected options for debugging
-       
-        
-        # Initialize a list to store the results
-        combined_data = []
+    # Ensure image is 2D (remove channel dimension if present)
+    if len(img.shape) > 2:
+        img = img[:, :, 0]
 
-        # Loop through selected options and process each dataset
-        for option in selected_options:
-            # Determine the file path and dataset based on selected option
-            if option == 'NIH':
-                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/nih.csv"
-                data_set_name = 'nih'
-                fieldnames = ['Patient ID','Finding Labels', 'Image Index', 'View Position','Patient Age','Patient Gender']
-            elif option == 'BBox_Pn_NIH':
-                
-                file_path = "/mnt/efs/common/radiply/radiply_v0/data/external/NIH-Data/BBox_Pn_NIH.csv"
-                data_set_name = 'BBox_Pn_NIH'
-                fieldnames = ['Finding Label', 'Image Index']
-            elif option == 'CHEX':
-                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/chex.csv"
-                data_set_name = 'chex'
-                fieldnames = ['patientid', 'Path', 'view','Age','Sex']
-            elif option == 'SIIM':
-                file_path = "/mnt/efs/common/radiply/radiply_v0/Radiply Backend/siim.csv"
-                data_set_name = 'siim'
-                fieldnames = ['patientid', 'ImageId', 'view',]
-            else:
-                continue  # Skip invalid options
+    # Add channel dimension (C x H x W)
+    img = img[None, :, :]
 
-            # Read the CSV file and process rows based on dataset
-            try:
-                with open(file_path, mode='r', encoding='utf-8') as file:
-                    csv_reader = csv.DictReader(file)
-                    for row in csv_reader:
-                        # Dynamically handle the dataset
-                        if data_set_name == 'nih':
-                            combined_data.append({
-                                'patient_ID':row['Patient ID'],
-                                'name': row['Finding Labels'],
-                                'img': row['Image Index'],
-                                'view': row['View Position'],
-                                'patient_age':row['Patient Age'],
-                                'patient_gender':row['Patient Gender'],
-                                'dataSetName': 'NIH'
-                            })
-                        elif data_set_name == 'BBox_Pn_NIH':
-                          
-                            combined_data.append({
-                                'patient_ID':'',
-                                'name': row['Finding Label'],
-                                'img': row['Image Index'],
-                                'view': '',
-                                'patient_age':'',
-                                'patient_gender':'',
-                                'dataSetName': 'BBox_Pn_NIH'
-                            })
-                        elif data_set_name == 'chex':
-                            combined_data.append({
-                                'patient_ID':row['patientid'],
-                                'name': row['patientid'],
-                                'img': row['Path'],
-                                'view': row['view'],
-                                'patient_age':row['Age'],
-                                'patient_gender':row['Sex'],
-                                'dataSetName': 'CHEX'
-                            })
-                        elif data_set_name == 'siim':
-                            combined_data.append({
-                                'patient_ID':row['patientid'],
-                                'name': row['patientid'],
-                                'img': row['ImageId'],
-                                'view': '',
-                                'patient_age':'',
-                                'patient_gender':'',
-                                'dataSetName': 'SIIM'
-                            })
+    # Apply transform: center crop and resize
+    transform = torchvision.transforms.Compose([
+        xrv.datasets.XRayCenterCrop(),
+        xrv.datasets.XRayResizer(224)
+    ])
+    img = transform(img)
 
-            except Exception as e:
-                return JsonResponse({"error": str(e)}, status=500)
+    # Convert to torch tensor and add batch dimension (B x C x H x W)
+    img_tensor = torch.from_numpy(img).unsqueeze(0).to(device)
 
-        # Return combined data for all selected datasets
-        return JsonResponse(combined_data, safe=False)
+    # Load and prepare model
+    model = xrv.models.get_model('densenet121-res224-all')
+    model.to(device)
+    model.eval()
+
+    # Predict
+    with torch.no_grad():
+        preds = model(img_tensor)
+        probs = preds[0] * 100  # convert to percentage
+
+    # Get index of the pathology
+    pathologies =default_pathologies
+    output = {pathology: probs[i].item() for i, pathology in enumerate(pathologies)}
+    outputs.append(output)
+   
+
+    return outputs
     
     
 @api_view(['GET'])
@@ -486,51 +361,6 @@ def get_pathologies(request, worklist_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@csrf_exempt
-def generate_heatmap_view(request):
-    if request.method == 'POST':
-        try:
-            # Get data from the request
-            data = json.loads(request.body)
-            worklist_id = data.get('id')
-            label = data.get('label')
-           
-
-            # Get imgpath using worklist_id from your database (e.g., Worklist model)
-            worklist = Worklist.objects.get(id=worklist_id)
-            imgpath = worklist.imgpath
-         
-
-            # Generate heatmaps
-            heatmaps, original_img = radiply.utils.generate_heatmap(imgpath, label)
-
-            # Convert original image to bytes
-            original_img_bytes = image_to_base64(original_img)
-
-            # Create Heatmap object
-            heatmap_instance = Heatmap.objects.create(
-                worklist=worklist,
-                original_img=original_img_bytes
-            )
-
-            # Save each pathology heatmap to the correct field
-            for pathology, heatmap_img in heatmaps:
-                heatmap_img_bytes = image_to_base64(heatmap_img)  # Convert to bytes
-                field_name = pathology.lower().replace(" ", "_")  # Convert to field name format
-                
-                # Check if the field exists in the model
-                if hasattr(heatmap_instance, field_name):
-                    setattr(heatmap_instance, field_name, heatmap_img_bytes)  # Set binary field value
-
-            # Save the updated heatmap instance
-            heatmap_instance.save()
-
-            return JsonResponse({"status": "success", "message": "Heatmaps saved successfully."})
-
-        except Worklist.DoesNotExist:
-            return JsonResponse({"status": "error", "message": "Worklist ID not found."}, status=404)
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
 def image_to_base64(image):
     """Convert image (NumPy array) to base64-encoded bytes."""
@@ -756,3 +586,26 @@ def upload_dicom(request):
         return JsonResponse({'status': 'success', 'details': responses})
 
     return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+ORTHANC_URL1 = 'http://3.111.210.119:8042'
+
+@api_view(['GET'])
+def get_study_series(request, study_id):
+    """Get all series for a study"""
+    try:
+        response = requests.get(f"{ORTHANC_URL1}/studies/{study_id}/series")
+        response.raise_for_status()
+        return JsonResponse(response.json(), safe=False)
+    except requests.exceptions.RequestException as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+def get_series_instances(request, series_id):
+    """Get all instances for a series"""
+    try:
+        response = requests.get(f"{ORTHANC_URL1}/series/{series_id}/instances")
+        response.raise_for_status()
+        return JsonResponse(response.json(), safe=False)
+    except requests.exceptions.RequestException as e:
+        return JsonResponse({'error': str(e)}, status=500)

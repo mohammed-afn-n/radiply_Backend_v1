@@ -1,4 +1,4 @@
-#D:\Radiply Backend\radiplybackend\settings.py
+#/mnt/efs/common/radiply/Worklist/radiplyBackend/radiplybackend/settings.py
 """
 Django settings for radiplybackend project.
 
@@ -13,24 +13,10 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-j#asqa^2d_i_9gh2bfxm*5c&v5-&8efbg3^^smkf1*u9x-h-m_'
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-
 ALLOWED_HOSTS = ['3.111.210.119', 'localhost', '127.0.0.1']
-
-
-# Application definition
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -44,9 +30,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'channels',
     'app','django_celery_beat','django_filters',
-
 ]
-
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -55,21 +39,16 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware', 
-    
+    'corsheaders.middleware.CorsMiddleware',   
 ]
-
 ROOT_URLCONF = 'radiplybackend.urls'
-
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  
     "http://3.111.210.119:3000",
 ]
-
 APPEND_SLASH = True
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -85,18 +64,8 @@ TEMPLATES = [
         },
     },
 ]
-
 WSGI_APPLICATION = 'radiplybackend.wsgi.application'
-
-
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
 DATABASES = {
-    # 'default': {
-    #     'ENGINE': 'django.db.backends.sqlite3',
-    #     'NAME': BASE_DIR / 'db.sqlite3',
-    # }
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'radiply',
@@ -106,10 +75,6 @@ DATABASES = {
         'PORT': '5432',
     }
  }
-
-
-# Password validation
-# https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -126,32 +91,13 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
-
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATIC_URL = 'static/'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-
 AUTH_USER_MODEL = 'app.User'
-
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         # 'rest_framework.authentication.BasicAuthentication',
@@ -170,56 +116,33 @@ REST_FRAMEWORK = {
     ],
      
 }
-
 from datetime import timedelta
-
 SIMPLE_JWT = {
- 
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
     'ALERT_BEFORE_EXPIRATION': timedelta(minutes=1),
-    
-    
     'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': True,
-    'UPDATE_LAST_LOGIN': True,
-    
-    
     'AUTH_HEADER_TYPES': ('Bearer',),
     'TOKEN_OBTAIN_SERIALIZER': 'app.serializers.CustomTokenObtainPairSerializer',
     'TOKEN_REFRESH_SERIALIZER': 'app.serializers.CustomTokenRefreshSerializer',
 }
-
-
 import os
-
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-
 ASGI_APPLICATION = 'radiplybackend.asgi.application'
-
-
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],  # Or your Redis server's host/port
+            "hosts": [("127.0.0.1", 6379)], 
         },
     },
 }
-
-
-# Redis broker
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
-
-# Optional: JSON serialization for performance
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
-
-# Celery Beat scheduler
-
-
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'

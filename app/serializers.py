@@ -1,7 +1,7 @@
 #/mnt/efs/common/radiply/Worklist/radiplyBackend/app/serializers.py
 from rest_framework import serializers
 from .models import User
-
+from django.contrib.auth.hashers import check_password
 
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
@@ -23,15 +23,26 @@ class UserSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password', None) 
         if not password:
             raise serializers.ValidationError({"password": "This field is required."})
+        
+        # Create the user instance
         instance = self.Meta.model(**validated_data)
-        instance.set_password(password)  
+        
+        # Set password and save
+        instance.set_password(password)
         instance.save()
+        
+        # Refresh the instance from database and verify
+        instance.refresh_from_db()
+        if not check_password(password, instance.password):
+            raise serializers.ValidationError({"password": "Password was not properly hashed."})
+        print('done')
         return instance
 
     def update(self, instance, validated_data):
         """
         Update an existing user instance. Password is optional during updates.
         """
+        print('i have entered ')
         password = validated_data.pop('password', None)  
         m2m_fields = {}
         for attr, value in list(validated_data.items()):
